@@ -1,7 +1,5 @@
 import { NotImplementedException } from '@nestjs/common';
-import { Incident } from '../domain/incident';
-import { Severity } from '../domain/severity';
-import { AssignmentsHttpClient } from './assignments-http.client';
+import { PrismaService } from '../../shared/prisma/prisma.service';
 import { OutboxPublisher } from './outbox.publisher';
 import { PrismaIncidentRepository } from './prisma-incident.repository';
 import { SnsEventPublisher } from './sns-event.publisher';
@@ -9,36 +7,18 @@ import { VehiclesHttpClient } from './vehicles-http.client';
 
 // Mientras las HU no los implementen, los componentes de infraestructura responden 501.
 describe('placeholder 501 — borrar al implementar la HU', () => {
-  const incident: Incident = {
-    id: 'i',
-    assignmentId: 'a',
-    severity: Severity.Minor,
-    description: 'd',
-    status: 'reported',
-    reportedAt: new Date(),
-    createdAt: new Date(),
-  };
+  const prisma = {} as PrismaService;
 
   it.each([
-    // TODO(HU_FLEETOPS_INC_01): reemplazar por pruebas reales de esta HU (persistir el incidente).
-    [
-      'PrismaIncidentRepository.save',
-      () => new PrismaIncidentRepository().save(incident),
-    ],
     // TODO(HU_FLEETOPS_INC_05): reemplazar por pruebas reales de esta HU (consultar por id).
     [
       'PrismaIncidentRepository.findById',
-      () => new PrismaIncidentRepository().findById('i'),
+      () => new PrismaIncidentRepository(prisma).findById('i'),
     ],
     // TODO(HU_FLEETOPS_INC_06): reemplazar por pruebas reales de esta HU (listar con filtros).
     [
       'PrismaIncidentRepository.findAll',
-      () => new PrismaIncidentRepository().findAll({}, 0, 20),
-    ],
-    // TODO(HU_FLEETOPS_INC_02): reemplazar por pruebas reales de esta HU (consulta de la asignación).
-    [
-      'AssignmentsHttpClient.findById',
-      () => new AssignmentsHttpClient().findById('a'),
+      () => new PrismaIncidentRepository(prisma).findAll({}, 0, 20),
     ],
     // TODO(HU_FLEETOPS_INC_03): reemplazar por pruebas reales de esta HU (consulta del vehículo).
     [
