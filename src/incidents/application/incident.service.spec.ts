@@ -1,7 +1,6 @@
 import { Logger, NotImplementedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getCorrelationId } from '../../shared/context/correlation-context';
-import { Incident } from '../domain/incident';
 import { IncidentEventFactory } from '../domain/incident-event.factory';
 import { Severity } from '../domain/severity';
 import { CreateIncidentCommand, IncidentService } from './incident.service';
