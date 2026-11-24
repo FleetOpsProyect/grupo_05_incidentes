@@ -8,6 +8,7 @@ process.env.DATABASE_URL = 'postgresql://e2e:e2e@localhost:5432/e2e';
 process.env.LOG_LEVEL = 'silent';
 
 import { AppModule } from '../src/app.module';
+import { ASSIGNMENTS_GATEWAY } from '../src/incidents/application/ports/assignments.gateway.port';
 import { PrismaService } from '../src/shared/prisma/prisma.service';
 
 const ASSIGNMENT_ID = '3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6c';
@@ -18,12 +19,18 @@ describe('Incident API (e2e, sin BD real)', () => {
     $queryRaw: jest.fn(),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
+    $transaction: jest.fn(),
   };
+
+  // Evita que el cliente HTTP real llame a ASSIGNMENTS_BASE_URL durante el e2e.
+  const assignments = { findById: jest.fn() };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue(prisma)
+      .overrideProvider(ASSIGNMENTS_GATEWAY)
+      .useValue(assignments)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -43,7 +50,12 @@ describe('Incident API (e2e, sin BD real)', () => {
     await app.close();
   });
 
-  it('POST /incidents válido responde 501 (descarta campos no declarados, no 400) con X-Correlation-Id', async () => {
+  // HU_FLEETOPS_INC_01 (aislada): la validación de asignación (HU_02) y de vehículo (HU_03) aún son
+  // stubs, así que un POST válido no puede resolver vehicle_id/driver_id y responde 500 sin trazas.
+  // Con HU_02 integrada este caso pasa a 201 (ver el e2e de esa rama).
+  it('POST /incidents válido sin HU_02 responde 500 internal_error sin trazas y no guarda nada', async () => {
+    prisma.$transaction.mockClear();
+
     const res = await request(app.getHttpServer())
       .post('/incidents')
       .set('X-Correlation-Id', 'corr-e2e')
@@ -54,15 +66,55 @@ describe('Incident API (e2e, sin BD real)', () => {
         description: 'Llanta pinchada',
         reported_at: '2026-10-28T09:30:00-05:00',
       })
-      .expect(501);
+      .expect(500);
 
     expect(res.headers['x-correlation-id']).toBe('corr-e2e');
     expect(res.body).toEqual({
-      code: 'not_implemented',
-      message: expect.any(String),
+      code: 'internal_error',
+      message: 'Internal server error',
       timestamp: expect.stringMatching(/-05:00$/),
       path: '/incidents',
     });
+    expect(JSON.stringify(res.body)).not.toContain('at ');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // CA HU_01: reported_at posterior a ahora + tolerancia → 422 reported_at_in_future.
+  it('POST /incidents con reported_at futura responde 422 reported_at_in_future', async () => {
+    prisma.$transaction.mockClear();
+
+    const res = await request(app.getHttpServer())
+      .post('/incidents')
+      .send({
+        assignment_id: ASSIGNMENT_ID,
+        severity: 'severe',
+        description: 'Colisión',
+        reported_at: new Date(Date.now() + 3_600_000).toISOString(),
+      })
+      .expect(422);
+
+    expect(res.body).toMatchObject({
+      code: 'reported_at_in_future',
+      path: '/incidents',
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // CA HU_01: reported_at sin offset es formato inválido (400), no 422.
+  it('POST /incidents con reported_at sin offset responde 400 invalid_format', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/incidents')
+      .send({
+        assignment_id: ASSIGNMENT_ID,
+        severity: 'minor',
+        description: 'x',
+        reported_at: '2026-10-28T09:30:00',
+      })
+      .expect(400);
+
+    expect(res.body.errors).toEqual([
+      { field: 'reported_at', code: 'invalid_format' },
+    ]);
   });
 
   it('POST /incidents inválido responde 400 con errors[] {field, code}', async () => {
@@ -122,7 +174,7 @@ describe('Incident API (e2e, sin BD real)', () => {
 
     expect(res.text).toContain('# HELP');
     expect(res.text).toContain(
-      'http_request_duration_seconds_count{method="POST",route="/incidents",status_code="501"}',
+      'http_request_duration_seconds_count{method="POST",route="/incidents",status_code="500"}',
     );
     expect(res.text).not.toMatch(/route="\/(metrics|health)"/);
   });
