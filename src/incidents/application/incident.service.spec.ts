@@ -45,7 +45,9 @@ describe('IncidentService', () => {
   let repository: jest.Mocked<IncidentRepository>;
   let logSpy: jest.SpyInstance;
 
-  function buildService(assignment = new FakeAssignmentValidator()) {
+  function buildService(
+    assignment: AssignmentInProgressValidator = new FakeAssignmentValidator(),
+  ) {
     return new IncidentService(
       repository,
       new IncidentEventFactory(),
@@ -72,7 +74,10 @@ describe('IncidentService', () => {
     calls.length = 0;
     getCorrelationIdMock.mockReturnValue('corr-1');
     repository = {
-      save: jest.fn((incident: Incident) => Promise.resolve(incident)),
+      save: jest.fn<
+        ReturnType<IncidentRepository['save']>,
+        Parameters<IncidentRepository['save']>
+      >((incident) => Promise.resolve(incident)),
       findById: jest.fn(),
       findAll: jest.fn(),
     };

@@ -32,7 +32,9 @@ describe('IncidentsController', () => {
   let controller: IncidentsController;
   let service: jest.Mocked<IncidentService>;
   let res: { location: jest.Mock };
-  const req = { jwt: { sub: 'user-sub-1', groups: [] } } as RequestWithJwt;
+  const req = {
+    jwt: { sub: 'user-sub-1', groups: [] },
+  } as unknown as RequestWithJwt;
 
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -84,7 +86,7 @@ describe('IncidentsController', () => {
         description: 'x',
         reported_at: '2026-10-28T09:30:00-05:00',
       },
-      {} as RequestWithJwt,
+      {} as unknown as RequestWithJwt,
       res as unknown as Response,
     );
 
