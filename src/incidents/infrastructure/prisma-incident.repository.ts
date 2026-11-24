@@ -1,19 +1,61 @@
 import { Injectable, NotImplementedException } from '@nestjs/common';
+import {
+  IncidentEvent,
+  IncidentReportedData,
+} from '../domain/events/incident-event';
 import { Incident } from '../domain/incident';
+import { Severity } from '../domain/severity';
 import {
   IncidentFilter,
   IncidentPage,
   IncidentRepository,
 } from '../application/ports/incident.repository.port';
+import { PrismaService } from '../../shared/prisma/prisma.service';
 
-// TODO(HU_FLEETOPS_INC_01): inyectar PrismaService (src/shared/prisma) al implementar el primer método.
 @Injectable()
 export class PrismaIncidentRepository implements IncidentRepository {
-  // TODO(HU_FLEETOPS_INC_01): insertar el incidente y su fila de outbox_events en una transacción.
-  save(_incident: Incident): Promise<Incident> {
-    return Promise.reject(
-      new NotImplementedException('PrismaIncidentRepository.save'),
-    );
+  constructor(private readonly prisma: PrismaService) {}
+
+  // Transactional Outbox: incidente y evento se confirman juntos o ninguno (DAS ADR-06).
+  async save(
+    incident: Incident,
+    event: IncidentEvent<string, IncidentReportedData>,
+  ): Promise<Incident> {
+    const row = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.incident.create({
+        data: {
+          id: incident.id,
+          assignmentId: incident.assignmentId,
+          severity: incident.severity,
+          description: incident.description,
+          status: incident.status,
+          reportedAt: incident.reportedAt,
+          createdAt: incident.createdAt,
+        },
+      });
+      await tx.outboxEvent.create({
+        data: {
+          eventId: event.event_id,
+          incidentId: incident.id,
+          eventType: event.event_type,
+          occurredAt: new Date(event.occurred_at),
+          source: event.source,
+          correlationId: event.correlation_id,
+          data: { ...event.data },
+        },
+      });
+      return created;
+    });
+
+    return {
+      id: row.id,
+      assignmentId: row.assignmentId,
+      severity: row.severity as Severity,
+      description: row.description,
+      status: 'reported',
+      reportedAt: row.reportedAt,
+      createdAt: row.createdAt,
+    };
   }
 
   // TODO(HU_FLEETOPS_INC_05): consulta por id.

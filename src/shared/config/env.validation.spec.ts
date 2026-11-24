@@ -20,7 +20,24 @@ describe('envValidationSchema', () => {
       CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 10000,
       AWS_REGION: 'us-east-1',
       OUTBOX_POLL_INTERVAL_MS: 5000,
+      REPORTED_AT_FUTURE_TOLERANCE_MS: 300000,
     });
+  });
+
+  it('acepta una tolerancia de reported_at configurada y rechaza valores inválidos', () => {
+    const ok = envValidationSchema.validate({
+      DATABASE_URL,
+      REPORTED_AT_FUTURE_TOLERANCE_MS: '60000',
+    });
+    expect(ok.value).toMatchObject({ REPORTED_AT_FUTURE_TOLERANCE_MS: 60000 });
+
+    for (const bad of ['-1', 'abc', '1.5']) {
+      const { error } = envValidationSchema.validate({
+        DATABASE_URL,
+        REPORTED_AT_FUTURE_TOLERANCE_MS: bad,
+      });
+      expect(error).toBeDefined();
+    }
   });
 
   it('convierte PORT y SWAGGER_ENABLED desde texto', () => {
