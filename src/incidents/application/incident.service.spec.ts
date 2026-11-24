@@ -4,6 +4,7 @@ import { getCorrelationId } from '../../shared/context/correlation-context';
 import { IncidentEventFactory } from '../domain/incident-event.factory';
 import { Severity } from '../domain/severity';
 import { CreateIncidentCommand, IncidentService } from './incident.service';
+import { AssignmentsGateway } from './ports/assignments.gateway.port';
 import { IncidentRepository } from './ports/incident.repository.port';
 import { AssignmentInProgressValidator } from './validation/assignment-in-progress.validator';
 import { CreateIncidentContext } from './validation/create-incident.context';
@@ -19,7 +20,13 @@ const DRIVER_ID = '44444444-4444-4444-8444-444444444444';
 const calls: string[] = [];
 
 // Dobles de las HU vecinas: HU_FLEETOPS_INC_02 (asignación) y HU_FLEETOPS_INC_03 (vehículo).
+const unusedGateway: AssignmentsGateway = { findById: jest.fn() };
+
 class FakeAssignmentValidator extends AssignmentInProgressValidator {
+  constructor() {
+    super(unusedGateway);
+  }
+
   protected override validate(context: CreateIncidentContext): Promise<void> {
     calls.push('assignment');
     context.vehicleId = VEHICLE_ID;
@@ -176,6 +183,10 @@ describe('IncidentService', () => {
     // CA (404/409 de HU_02): si un validador falla no se guarda ni se publica nada.
     it('no guarda si un validador de la cadena falla', async () => {
       class FailingAssignment extends AssignmentInProgressValidator {
+        constructor() {
+          super(unusedGateway);
+        }
+
         protected override validate(): Promise<void> {
           return Promise.reject(new Error('assignment_not_in_progress'));
         }
@@ -189,8 +200,18 @@ describe('IncidentService', () => {
 
     // CA (500): si la cadena no resuelve vehicle_id/driver_id es un error interno, no un 201.
     it('lanza error interno si la cadena no resuelve vehicle_id y driver_id', async () => {
+      class NoRefsAssignment extends AssignmentInProgressValidator {
+        constructor() {
+          super(unusedGateway);
+        }
+
+        protected override validate(): Promise<void> {
+          return Promise.resolve();
+        }
+      }
+
       await expect(
-        buildService(new AssignmentInProgressValidator()).create(command()),
+        buildService(new NoRefsAssignment()).create(command()),
       ).rejects.toThrow('vehicle_id y driver_id');
       expect(repository.save).not.toHaveBeenCalled();
     });
@@ -218,6 +239,73 @@ describe('IncidentService', () => {
         sub: 'user-sub-1',
       });
       expect(JSON.stringify(logged)).not.toContain('Llanta pinchada');
+    });
+  });
+
+  // HU_FLEETOPS_INC_02: la cadena real consulta Asignaciones antes de guardar.
+  describe('create con la validación de asignación real (HU_FLEETOPS_INC_02)', () => {
+    const findById = jest.fn();
+    const withGateway = () =>
+      buildService(new AssignmentInProgressValidator({ findById }));
+
+    // CA: Asignaciones responde 404 → 404 assignment_not_found, sin guardar ni publicar.
+    it('asignación inexistente → 404 assignment_not_found y no guarda', async () => {
+      findById.mockResolvedValue(null);
+
+      await expect(withGateway().create(command())).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'assignment_not_found' },
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
+    });
+
+    // CA: estado distinto de in_progress → 409 assignment_not_in_progress, sin guardar ni publicar.
+    it.each(['pending', 'finished', 'interrupted_by_incident', 'cancelled'])(
+      'asignación %s → 409 assignment_not_in_progress y no guarda',
+      async (status) => {
+        findById.mockResolvedValue({
+          id: 'a',
+          status,
+          vehicleId: VEHICLE_ID,
+          driverId: DRIVER_ID,
+        });
+
+        await expect(withGateway().create(command())).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'assignment_not_in_progress' },
+        });
+        expect(repository.save).not.toHaveBeenCalled();
+      },
+    );
+
+    // CA: in_progress → vehicle_id y driver_id salen de la asignación y viajan solo en el evento.
+    it('asignación in_progress → toma vehicle_id y driver_id de la respuesta para el evento', async () => {
+      findById.mockResolvedValue({
+        id: 'a',
+        status: 'in_progress',
+        vehicleId: 'vehicle-from-g2',
+        driverId: 'driver-from-g2',
+      });
+      const input = command();
+
+      await withGateway().create(input);
+
+      expect(findById).toHaveBeenCalledWith(input.assignmentId);
+      expect(repository.save.mock.calls[0][1].data).toMatchObject({
+        vehicle_id: 'vehicle-from-g2',
+        driver_id: 'driver-from-g2',
+      });
+    });
+
+    // CA: si Asignaciones no responde el 503 se propaga y no se guarda.
+    it('si Asignaciones no está disponible propaga el error y no guarda', async () => {
+      findById.mockRejectedValue(new Error('dependency_unavailable'));
+
+      await expect(withGateway().create(command())).rejects.toThrow(
+        'dependency_unavailable',
+      );
+      expect(repository.save).not.toHaveBeenCalled();
     });
   });
 

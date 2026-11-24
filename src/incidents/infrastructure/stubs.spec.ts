@@ -1,6 +1,5 @@
 import { NotImplementedException } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-import { AssignmentsHttpClient } from './assignments-http.client';
 import { OutboxPublisher } from './outbox.publisher';
 import { PrismaIncidentRepository } from './prisma-incident.repository';
 import { SnsEventPublisher } from './sns-event.publisher';
@@ -20,11 +19,6 @@ describe('placeholder 501 — borrar al implementar la HU', () => {
     [
       'PrismaIncidentRepository.findAll',
       () => new PrismaIncidentRepository(prisma).findAll({}, 0, 20),
-    ],
-    // TODO(HU_FLEETOPS_INC_02): reemplazar por pruebas reales de esta HU (consulta de la asignación).
-    [
-      'AssignmentsHttpClient.findById',
-      () => new AssignmentsHttpClient().findById('a'),
     ],
     // TODO(HU_FLEETOPS_INC_03): reemplazar por pruebas reales de esta HU (consulta del vehículo).
     [
