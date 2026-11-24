@@ -32,6 +32,12 @@ export const envValidationSchema = Joi.object({
     .min(1000)
     .default(10000),
 
+  // Tolerancia de reported_at frente a la hora actual (HU_FLEETOPS_INC_01, regla 422).
+  REPORTED_AT_FUTURE_TOLERANCE_MS: Joi.number()
+    .integer()
+    .min(0)
+    .default(300000),
+
   AWS_REGION: Joi.string().default('us-east-1'),
   SNS_TOPIC_ARN: Joi.string()
     .pattern(/^arn:aws:sns:[a-z0-9-]+:\d{12}:fleetops_incident_events$/)

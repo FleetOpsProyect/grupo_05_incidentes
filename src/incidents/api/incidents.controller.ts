@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Req,
   Res,
 } from '@nestjs/common';
 import {
@@ -18,6 +19,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
+import type { RequestWithJwt } from '../../shared/middleware/jwt-payload.middleware';
 import { buildValidationException } from '../../shared/validation/validation-exception.factory';
 import { IncidentService } from '../application/incident.service';
 import { Incident, toBogotaIso } from '../domain/incident';
@@ -87,9 +89,13 @@ export class IncidentsController {
     },
   })
   @ApiResponse({ status: 400, description: 'validation_error' })
-  @ApiResponse({ status: 501, description: 'not_implemented (arquetipo)' })
+  @ApiResponse({ status: 404, description: 'assignment_not_found' })
+  @ApiResponse({ status: 409, description: 'assignment_not_in_progress' })
+  @ApiResponse({ status: 422, description: 'reported_at_in_future' })
+  @ApiResponse({ status: 500, description: 'internal_error' })
   async create(
     @Body() dto: CreateIncidentDto,
+    @Req() req: RequestWithJwt,
     @Res({ passthrough: true }) res: Response,
   ): Promise<IncidentResponseDto> {
     const incident = await this.service.create({
@@ -97,6 +103,7 @@ export class IncidentsController {
       severity: dto.severity,
       description: dto.description,
       reportedAt: new Date(dto.reported_at),
+      userSub: req.jwt?.sub,
     });
     res.location(`/incidents/${incident.id}`);
     return toResponse(incident);

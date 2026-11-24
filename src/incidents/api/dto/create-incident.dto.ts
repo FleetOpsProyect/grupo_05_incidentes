@@ -5,9 +5,14 @@ import {
   IsNotEmpty,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { Severity } from '../../domain/severity';
+
+// ISO 8601 con hora y offset obligatorio (Z o ±hh:mm): `@IsISO8601` solo acepta también fechas sin offset.
+const ISO_8601_WITH_OFFSET =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
 export class CreateIncidentDto {
   @ApiProperty({
@@ -29,5 +34,6 @@ export class CreateIncidentDto {
 
   @ApiProperty({ format: 'date-time', example: '2026-10-28T09:30:00-05:00' })
   @IsISO8601({ strict: true, strictSeparator: true })
+  @Matches(ISO_8601_WITH_OFFSET)
   reported_at: string;
 }

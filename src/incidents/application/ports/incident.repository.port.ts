@@ -1,3 +1,7 @@
+import {
+  IncidentEvent,
+  IncidentReportedData,
+} from '../../domain/events/incident-event';
 import { Incident } from '../../domain/incident';
 import { Severity } from '../../domain/severity';
 
@@ -18,7 +22,11 @@ export interface IncidentPage {
 }
 
 export interface IncidentRepository {
-  save(incident: Incident): Promise<Incident>;
+  /** Guarda el incidente y su evento de outbox en la misma transacción. */
+  save(
+    incident: Incident,
+    event: IncidentEvent<string, IncidentReportedData>,
+  ): Promise<Incident>;
   findById(id: string): Promise<Incident | null>;
   findAll(
     filter: IncidentFilter,

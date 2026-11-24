@@ -7,6 +7,9 @@ import { ASSIGNMENTS_GATEWAY } from './application/ports/assignments.gateway.por
 import { EVENT_PUBLISHER } from './application/ports/event.publisher.port';
 import { INCIDENT_REPOSITORY } from './application/ports/incident.repository.port';
 import { VEHICLES_GATEWAY } from './application/ports/vehicles.gateway.port';
+import { AssignmentInProgressValidator } from './application/validation/assignment-in-progress.validator';
+import { ReportedAtNotInFutureValidator } from './application/validation/reported-at-not-in-future.validator';
+import { VehicleExistsValidator } from './application/validation/vehicle-exists.validator';
 import { IncidentEventFactory } from './domain/incident-event.factory';
 import { AssignmentsHttpClient } from './infrastructure/assignments-http.client';
 import { OutboxPublisher } from './infrastructure/outbox.publisher';
@@ -27,6 +30,9 @@ import { VehiclesHttpClient } from './infrastructure/vehicles-http.client';
   providers: [
     IncidentService,
     IncidentEventFactory,
+    ReportedAtNotInFutureValidator,
+    AssignmentInProgressValidator,
+    VehicleExistsValidator,
     OutboxPublisher,
     { provide: INCIDENT_REPOSITORY, useClass: PrismaIncidentRepository },
     { provide: ASSIGNMENTS_GATEWAY, useClass: AssignmentsHttpClient },
