@@ -85,14 +85,54 @@ Se validan con Joi al arrancar (`src/shared/config/env.validation.ts`); la plant
 - la cola `incident_events_test_queue`,
 - una suscripción SQS al topic con raw message delivery.
 
-La app recibe `AWS_ENDPOINT_URL=http://localstack:4566`, `AWS_REGION`, `SNS_TOPIC_ARN` y credenciales ficticias. El script debe tener permiso de ejecución (`chmod +x`). Mientras `SnsEventPublisher` sea un stub (HU_FLEETOPS_INC_04), LocalStack queda disponible pero sin uso.
+La app recibe `AWS_ENDPOINT_URL=http://localstack:4566`, `AWS_REGION`, `SNS_TOPIC_ARN` y credenciales ficticias. El script debe tener permiso de ejecución (`chmod +x`).
 
 Para leer lo publicado en la cola de prueba:
 
 ```bash
-docker compose exec localstack awslocal sqs receive-message \
+docker compose exec localstack awslocal sqs receive-message --message-attribute-names All \
   --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/incident_events_test_queue
 ```
+
+## Publicación de eventos (outbox)
+
+El incidente y su evento se guardan en la misma transacción. `OutboxPublisher` publica los pendientes de `outbox_events` cada `OUTBOX_POLL_INTERVAL_MS` (DAS ADR-06 y ADR-07).
+
+- **Reclamo:** hasta 10 eventos con `FOR UPDATE SKIP LOCKED`, con un lease de 60 s en `next_attempt_at` para que otra instancia no los tome mientras se publican.
+- **Publicación:** `SnsEventPublisher` envía el sobre JSON al topic, con el atributo `event_type`. Cada publicación se aborta a los 3 s.
+- **Éxito:** se guardan `published_at` y `message_id`.
+- **Fallo:** el incidente no se revierte. Sube `attempts`, se guarda `last_error` y el reintento se aplaza con espera creciente: `OUTBOX_POLL_INTERVAL_MS × 2^intentos previos`, con un máximo de 5 minutos. Ningún evento se descarta.
+- **Entrega al menos una vez:** un evento puede llegar repetido. Los consumidores deduplican por `event_id`.
+
+El sondeo no arranca sin `SNS_TOPIC_ARN` (los eventos quedan pendientes) ni con `NODE_ENV=test`. En EC2, `AWS_ENDPOINT_URL` va vacío y las credenciales salen del IAM role. Fuera de Docker y contra LocalStack hay que definir `AWS_ACCESS_KEY_ID=test` y `AWS_SECRET_ACCESS_KEY=test`.
+
+> **No actives la publicación contra la BD compartida desde tu equipo.** Tu LocalStack recibiría eventos de otras personas y quedarían marcados como publicados. Para probar el outbox usa el Postgres local de `docker compose`.
+
+### Probar el publicador sin pasar por la API
+
+```bash
+docker compose build app && docker compose up -d
+
+docker compose exec db psql -U incident -d incident <<'SQL'
+WITH i AS (
+  INSERT INTO incidents (id, assignment_id, severity, description, reported_at)
+  VALUES (gen_random_uuid(), gen_random_uuid(), 'severe', 'Prueba de outbox', now())
+  RETURNING id, assignment_id, severity, description, reported_at
+)
+INSERT INTO outbox_events (event_id, incident_id, event_type, occurred_at, correlation_id, data)
+SELECT gen_random_uuid(), id, 'severe_incident_reported_event', now(), 'prueba-outbox',
+       jsonb_build_object('incident_id', id, 'assignment_id', assignment_id,
+         'vehicle_id', gen_random_uuid(), 'driver_id', gen_random_uuid(),
+         'severity', severity, 'description', description,
+         'reported_at', '2026-10-27T09:29:55-05:00')
+FROM i;
+SQL
+
+docker compose exec db psql -U incident -d incident -c \
+  "select event_type, attempts, next_attempt_at, published_at, message_id, last_error from outbox_events order by occurred_at"
+```
+
+Para simular la caída de SNS: `docker compose stop localstack`, inserta otro evento y observa cómo crece `attempts`. Con `docker compose start localstack`, el evento se publica en el siguiente reintento.
 
 ## Estructura (ADR-02)
 
@@ -105,7 +145,7 @@ src/health · src/metrics                                · /health y /metrics
 prisma/                                                 · schema y migraciones
 ```
 
-Los componentes aún sin HU (clientes HTTP de Asignaciones y Vehículos, `SnsEventPublisher`, `OutboxPublisher`, `PrismaIncidentRepository`) son stubs marcados con `TODO(HU_FLEETOPS_INC_xx)`.
+Lo que aún no tiene HU (por ejemplo el cliente HTTP de Vehículos y las consultas de `PrismaIncidentRepository`) son stubs marcados con `TODO(HU_FLEETOPS_INC_xx)`.
 
 ## Base de datos compartida
 
