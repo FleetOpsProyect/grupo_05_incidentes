@@ -3,7 +3,6 @@ import { PrismaService } from '../../shared/prisma/prisma.service';
 import { AssignmentsHttpClient } from './assignments-http.client';
 import { OutboxPublisher } from './outbox.publisher';
 import { PrismaIncidentRepository } from './prisma-incident.repository';
-import { SnsEventPublisher } from './sns-event.publisher';
 import { VehiclesHttpClient } from './vehicles-http.client';
 
 // Mientras las HU no los implementen, los componentes de infraestructura responden 501.
@@ -30,19 +29,6 @@ describe('placeholder 501 — borrar al implementar la HU', () => {
     [
       'VehiclesHttpClient.findById',
       () => new VehiclesHttpClient().findById('v'),
-    ],
-    // TODO(HU_FLEETOPS_INC_04): reemplazar por pruebas reales de esta HU (publicación en SNS).
-    [
-      'SnsEventPublisher.publish',
-      () =>
-        new SnsEventPublisher().publish({
-          event_id: 'e',
-          event_type: 'minor_incident_reported_event',
-          occurred_at: 'now',
-          source: 'incident',
-          correlation_id: 'c',
-          data: {},
-        }),
     ],
     // TODO(HU_FLEETOPS_INC_04): reemplazar por pruebas reales de esta HU (publicador del outbox).
     [
