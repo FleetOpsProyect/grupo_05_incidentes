@@ -1,8 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { EventPublisher } from '../application/ports/event.publisher.port';
 import {
+  OUTBOX_INTERVAL_NAME,
   OUTBOX_MAX_BACKOFF_MS,
   OutboxPublisher,
   PendingOutboxEvent,
@@ -33,6 +35,8 @@ describe('OutboxPublisher', () => {
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
   let outbox: OutboxPublisher;
+  let scheduler: SchedulerRegistry;
+  let env: Record<string, unknown>;
 
   beforeEach(() => {
     jest.useFakeTimers({ now: NOW });
@@ -42,13 +46,24 @@ describe('OutboxPublisher', () => {
     log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    env = {
+      NODE_ENV: 'development',
+      SNS_TOPIC_ARN:
+        'arn:aws:sns:us-east-1:000000000000:fleetops_incident_events',
+      OUTBOX_POLL_INTERVAL_MS: 5000,
+    };
+    scheduler = new SchedulerRegistry();
     outbox = new OutboxPublisher(
       {
         $queryRaw: queryRaw,
         outboxEvent: { update },
       } as unknown as PrismaService,
       { publish } as EventPublisher,
-      { getOrThrow: () => 5000 } as unknown as ConfigService,
+      {
+        get: (key: string) => env[key],
+        getOrThrow: (key: string) => env[key],
+      } as unknown as ConfigService,
+      scheduler,
     );
   });
 
@@ -183,5 +198,64 @@ describe('OutboxPublisher', () => {
 
     expect(publish).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+
+  describe('programación', () => {
+    const started = () => scheduler.doesExist('interval', OUTBOX_INTERVAL_NAME);
+
+    it('sondea cada OUTBOX_POLL_INTERVAL_MS y se detiene al destruir el módulo', async () => {
+      outbox.onModuleInit();
+      expect(started()).toBe(true);
+
+      await jest.advanceTimersByTimeAsync(4999);
+      expect(queryRaw).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+
+      outbox.onModuleDestroy();
+      await jest.advanceTimersByTimeAsync(10000);
+      expect(started()).toBe(false);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['en pruebas', { NODE_ENV: 'test' }],
+      ['sin SNS_TOPIC_ARN', { SNS_TOPIC_ARN: undefined }],
+    ])('no arranca %s', (_caso, overrides) => {
+      Object.assign(env, overrides);
+
+      outbox.onModuleInit();
+
+      expect(started()).toBe(false);
+      expect(() => outbox.onModuleDestroy()).not.toThrow();
+    });
+
+    it('no solapa ciclos mientras el anterior sigue publicando', async () => {
+      let release: (messageId: string) => void = () => undefined;
+      publish.mockReturnValue(
+        new Promise<string>((resolve) => (release = resolve)),
+      );
+
+      const first = outbox.runCycle();
+      await outbox.runCycle();
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+
+      release('msg-1');
+      await first;
+      await outbox.runCycle();
+      expect(queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('un fallo de la BD no rompe el sondeo', async () => {
+      queryRaw.mockRejectedValueOnce(new Error('BD caída'));
+
+      await expect(outbox.runCycle()).resolves.toBeUndefined();
+      await outbox.runCycle();
+
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'outbox_cycle_failed' }),
+      );
+      expect(publish).toHaveBeenCalledTimes(1);
+    });
   });
 });

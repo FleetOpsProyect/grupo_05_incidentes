@@ -1,5 +1,12 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   EVENT_PUBLISHER,
@@ -8,6 +15,7 @@ import {
 import { IncidentEvent } from '../domain/events/incident-event';
 import { toBogotaIso } from '../domain/incident';
 
+export const OUTBOX_INTERVAL_NAME = 'outbox-publisher';
 export const OUTBOX_BATCH_SIZE = 10;
 // Mayor que el peor caso de un lote (10 publicaciones de hasta 3 s).
 export const OUTBOX_LEASE_SECONDS = 60;
@@ -45,14 +53,60 @@ function describeError(error: unknown): string {
 // Publica los eventos pendientes de outbox_events (DAS ADR-07). La entrega es al menos una
 // vez: si falla el marcado tras publicar, se reenvía y el consumidor deduplica por event_id.
 @Injectable()
-export class OutboxPublisher {
+export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxPublisher.name);
+  private running = false;
 
   constructor(
     private readonly prisma: PrismaService,
     @Inject(EVENT_PUBLISHER) private readonly publisher: EventPublisher,
     private readonly config: ConfigService,
+    private readonly scheduler: SchedulerRegistry,
   ) {}
+
+  // @Interval no puede leer la configuración: el intervalo se registra al iniciar el módulo.
+  onModuleInit(): void {
+    // En pruebas (e2e con Prisma mockeado) no se sondea.
+    if (this.config.get<string>('NODE_ENV') === 'test') {
+      return;
+    }
+    if (!this.config.get<string>('SNS_TOPIC_ARN')) {
+      this.logger.warn(
+        'SNS_TOPIC_ARN no está configurado: los eventos quedan pendientes en outbox_events',
+      );
+      return;
+    }
+    const interval = setInterval(
+      () => void this.runCycle(),
+      this.config.getOrThrow<number>('OUTBOX_POLL_INTERVAL_MS'),
+    );
+    this.scheduler.addInterval(OUTBOX_INTERVAL_NAME, interval);
+  }
+
+  onModuleDestroy(): void {
+    if (this.scheduler.doesExist('interval', OUTBOX_INTERVAL_NAME)) {
+      this.scheduler.deleteInterval(OUTBOX_INTERVAL_NAME);
+    }
+  }
+
+  // Si el ciclo anterior sigue en curso (SNS lento), este turno se salta.
+  async runCycle(): Promise<void> {
+    if (this.running) {
+      return;
+    }
+    this.running = true;
+    try {
+      await this.publishPending();
+    } catch (error) {
+      // Un fallo de la BD no debe tumbar el proceso: se reintenta en el siguiente turno.
+      this.logger.error({
+        event: 'outbox_cycle_failed',
+        error: describeError(error),
+      });
+    } finally {
+      this.running = false;
+    }
+  }
 
   async publishPending(): Promise<void> {
     for (const row of await this.claimPending()) {
