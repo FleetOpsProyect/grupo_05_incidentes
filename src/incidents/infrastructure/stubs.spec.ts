@@ -1,7 +1,6 @@
 import { NotImplementedException } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { AssignmentsHttpClient } from './assignments-http.client';
-import { OutboxPublisher } from './outbox.publisher';
 import { PrismaIncidentRepository } from './prisma-incident.repository';
 import { VehiclesHttpClient } from './vehicles-http.client';
 
@@ -29,11 +28,6 @@ describe('placeholder 501 — borrar al implementar la HU', () => {
     [
       'VehiclesHttpClient.findById',
       () => new VehiclesHttpClient().findById('v'),
-    ],
-    // TODO(HU_FLEETOPS_INC_04): reemplazar por pruebas reales de esta HU (publicador del outbox).
-    [
-      'OutboxPublisher.publishPending',
-      () => new OutboxPublisher().publishPending(),
     ],
   ])('%s responde 501', async (_name, call) => {
     await expect(call()).rejects.toBeInstanceOf(NotImplementedException);
